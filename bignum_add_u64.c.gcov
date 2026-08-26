@@ -1,0 +1,165 @@
+        -:    0:Source:src/bignum_add_u64.c
+        -:    0:Graph:build/bignum_add_u64.gcno
+        -:    0:Data:build/bignum_add_u64.gcda
+        -:    0:Runs:5
+        -:    1:/**
+        -:    2: * @file    bignum_add_u64.c
+        -:    3: * @author  git@bayborodov.com
+        -:    4: * @version 1.0.0
+        -:    5: * @date    29.07.2026
+        -:    6: *
+        -:    7: * @brief   Эталонная реализация сложения большого числа и 64-битного скаляра на C11.
+        -:    8: */
+        -:    9:
+        -:   10:#include "bignum_add_u64.h"
+        -:   11:
+        -:   12:/**
+        -:   13: * @brief Внутренняя функция для проверки недопустимого перекрытия буферов.
+        -:   14: *
+        -:   15: * @param[in] res Указатель на буфер результата.
+        -:   16: * @param[in] op  Указатель на входной буфер (операнд).
+        -:   17: * @return 1 если есть частичное перекрытие, 0 если всё в порядке или это in-place.
+        -:   18: */
+        -:   19:static inline int check_buffer_overlap(const bignum_t *res, const bignum_t *op) {
+   558166:   20:    if (res == op) {
+branch  0 taken 558165 (fallthrough)
+branch  1 taken 1
+        -:   21:        return 0; // In-place операция (result == a) разрешена
+        -:   22:    }
+        -:   23:    
+        -:   24:    const unsigned char *p_res = (const unsigned char *)res;
+        -:   25:    const unsigned char *p_op  = (const unsigned char *)op;
+        -:   26:
+        -:   27:    // Проверяем пересечение диапазонов памяти
+   558165:   28:    if ((p_res < p_op + sizeof(bignum_t)) && (p_op < p_res + sizeof(bignum_t))) {
+branch  0 taken 755284 (fallthrough)
+branch  1 taken -197119
+branch  2 taken 755283 (fallthrough)
+branch  3 taken 1
+        -:   29:        return 1;
+        -:   30:    }
+        -:   31:    return 0;
+        -:   32:}
+        -:   33:
+function bignum_add_u64 called 558170 returned 100% blocks executed 100%
+   558170:   34:bignum_add_u64_status_t bignum_add_u64(bignum_t *result, const bignum_t *a, const uint64_t b) {
+        -:   35:    // 1. Валидация указателей
+   558170:   36:    if (!result || !a) {
+branch  0 taken 558168 (fallthrough)
+branch  1 taken 2
+        -:   37:        return BIGNUM_ADD_U64_ERROR_NULL_PTR;
+        -:   38:    }
+        -:   39:
+        -:   40:    // 2. Проверка длины
+   558168:   41:    if (a->len > BIGNUM_CAPACITY) {
+branch  0 taken 558166 (fallthrough)
+branch  1 taken 2
+        -:   42:        return BIGNUM_ADD_U64_ERROR_CAPACITY_EXCEEDED;
+        -:   43:    }
+        -:   44:
+        -:   45:    // 3. Проверка перекрытия буферов
+        -:   46:    if (check_buffer_overlap(result, a)) {
+        -:   47:        return BIGNUM_ADD_U64_ERROR_BUFFER_OVERLAP;
+        -:   48:    }
+        -:   49:
+        -:   50:    // 4. Быстрый путь: a == 0
+   558165:   51:    if (a->len == 0) {
+branch  0 taken 328 (fallthrough)
+branch  1 taken 557837
+      328:   52:        if (b == 0) {
+branch  0 taken 1 (fallthrough)
+branch  1 taken 327
+        1:   53:            result->len = 0;
+        -:   54:        } else {
+      327:   55:            result->words[0] = b;
+      327:   56:            result->len = 1;
+        -:   57:        }
+      328:   58:        return BIGNUM_ADD_U64_SUCCESS;
+        -:   59:    }
+        -:   60:
+        -:   61:    // 5. Быстрый путь: b == 0
+   557837:   62:    if (b == 0) {
+branch  0 taken 1 (fallthrough)
+branch  1 taken 557836
+        1:   63:        if (result != a) {
+branch  0 taken 1
+branch  1 taken 0
+        3:   64:            for (size_t i = 0; i < a->len; i++) {
+branch  0 taken 2
+branch  1 taken 1 (fallthrough)
+        2:   65:                result->words[i] = a->words[i];
+        -:   66:            }
+        -:   67:        }
+        -:   68:        size_t new_len = a->len;
+        -:   69:        // Нормализация на случай, если 'a' содержало ведущие нули
+        1:   70:        while (new_len > 0 && result->words[new_len - 1] == 0) {
+branch  0 taken 1 (fallthrough)
+branch  1 taken 0
+branch  2 taken 0
+branch  3 taken 1 (fallthrough)
+        -:   71:            new_len--;
+        -:   72:        }
+        1:   73:        result->len = new_len;
+        1:   74:        return BIGNUM_ADD_U64_SUCCESS;
+        -:   75:    }
+        -:   76:
+        -:   77:    // 6. Основной алгоритм сложения
+        -:   78:    uint64_t carry = b;
+        -:   79:    size_t i = 0;
+        -:   80:
+   992008:   81:    for (; i < a->len; i++) {
+branch  0 taken 981526
+branch  1 taken 10482 (fallthrough)
+   981526:   82:        uint64_t w = a->words[i];
+   981526:   83:        uint64_t sum = w + carry;
+        -:   84:        
+   981526:   85:        carry = (sum < w) ? 1 : 0; // Вычисляем перенос
+   981526:   86:        result->words[i] = sum;
+        -:   87:
+        -:   88:        // Ранний выход: если перенос затух, дальше складывать не с чем
+   981526:   89:        if (carry == 0) {
+branch  0 taken 547354 (fallthrough)
+branch  1 taken 434172
+   547354:   90:            i++;
+   547354:   91:            break;
+        -:   92:        }
+        -:   93:    }
+        -:   94:
+        -:   95:    // 7. Копирование оставшегося хвоста (если вышли досрочно и это не in-place)
+   557836:   96:    if (result != a) {
+branch  0 taken 557835
+branch  1 taken 1
+   701767:   97:        for (; i < a->len; i++) {
+branch  0 taken 143932
+branch  1 taken 557835 (fallthrough)
+   143932:   98:            result->words[i] = a->words[i];
+        -:   99:        }
+        -:  100:    }
+        -:  101:
+        -:  102:    size_t new_len = a->len;
+        -:  103:
+        -:  104:    // 8. Обработка финального переноса
+   557836:  105:    if (carry) {
+branch  0 taken 5 (fallthrough)
+branch  1 taken 557831
+        5:  106:        if (new_len == BIGNUM_CAPACITY) {
+branch  0 taken 4 (fallthrough)
+branch  1 taken 1
+        -:  107:            return BIGNUM_ADD_U64_ERROR_OVERFLOW;
+        -:  108:        }
+        4:  109:        result->words[new_len] = 1;
+        4:  110:        new_len++;
+        -:  111:    }
+        -:  112:
+        -:  113:    // 9. Нормализация результата
+   557835:  114:    while (new_len > 0 && result->words[new_len - 1] == 0) {
+branch  0 taken 367585 (fallthrough)
+branch  1 taken -17210
+branch  2 taken -207460
+branch  3 taken 575045 (fallthrough)
+        -:  115:        new_len--;
+        -:  116:    }
+   557835:  117:    result->len = new_len;
+        -:  118:
+   557835:  119:    return BIGNUM_ADD_U64_SUCCESS;
+        -:  120:}
