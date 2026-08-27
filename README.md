@@ -18,10 +18,14 @@ The primary operation is:
 
 ```c
 #include "bignum_add_u64.h"
-bignum_add_u64(/* see the public header for the exact typed parameters */);
+
+bignum_t result;
+bignum_t a;
+uint64_t b = 3;
+bignum_add_u64_status_t status = bignum_add_u64(&result, &a, b);
 ```
 
-The public header is authoritative for parameter direction, aliasing, overflow, normalization, and status semantics. No undocumented global state is used; independent calls are thread-safe when their objects do not overlap.
+The caller allocates `result` and owns both bignum objects. Exact in-place use is valid (`result == a`), while partial object overlap is rejected. A successful call produces the normalized value `a + b`; callers must inspect the named status before consuming the result. The public header is authoritative for parameter direction, aliasing, overflow, normalization, and status semantics. No undocumented global state is used; independent calls are thread-safe when their objects do not overlap.
 
 ## Dependencies
 
@@ -58,11 +62,11 @@ make test CONFIG=release USE_ASM=no CC='gcc --coverage' LDFLAGS='--coverage -no-
 gcov -b -c build/bignum_add_u64.gcda
 ```
 
-Coverage acceptance is greater than 90% for the operation source; uncovered defensive branches must be explained in the review record.
+Coverage acceptance is greater than 90% for the operation source; the current review record reports the measured line and branch results, and any defensive branches not taken must be explained there.
 
 ## Benchmarks
 
-The benchmark adapter supplies deterministic operands, validates profile fields, executes the operation callback, and publishes a checksum after completion. The standard matrix can be run as follows:
+The benchmark adapter supplies deterministic operands, validates profile fields, executes the operation callback, and publishes a checksum after completion. The standard matrix can be run as follows. The command below is a small reproducible smoke run; increase repetitions and iterations for performance decisions:
 
 ```sh
 make bench_matrix CONFIG=release USE_ASM=no \
@@ -72,7 +76,7 @@ make bench_matrix CONFIG=release USE_ASM=no \
   BENCH_MATRIX_DATA_COUNT=1 BENCH_MATRIX_TIMEOUT_SECONDS=30
 ```
 
-Run the same command with `USE_ASM=yes` for the assembly comparison. Reports are written under `benchmarks/reports/`; compare like-for-like profile and execution-mode keys only.
+Run the same command with `USE_ASM=yes` for the assembly comparison. Reports are written under `benchmarks/reports/`; compare like-for-like profile and execution-mode keys only, and use the companion profile guides for the full matrix and validation rules.
 
 ## C11 and Assembly Boundary
 
