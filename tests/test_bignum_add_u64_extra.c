@@ -3,6 +3,10 @@
  * @author  git@bayborodov.com
  * @version 1.0.0
  * @date    29.07.2026
+ *
+ * @brief   Extended robustness and randomized tests for bignum_add_u64.
+ * @details The fuzz oracle checks successful results for monotonicity and
+ *          exercises bounded random logical lengths without sharing state.
  */
 
 #include "bignum_add_u64.h"
@@ -71,7 +75,7 @@ int test_fuzzing_robustness(void) {
         bignum_add_u64_status_t status = bignum_add_u64(&result, &a, b);
 
         if (status == BIGNUM_ADD_U64_SUCCESS) {
-            // Монотонность: result >= a
+            // Monotonicity: result >= a
             if (bignum_cmp(&result, &a) == BIGNUM_CMP_LESS) {
                 fprintf(stderr, "Fuzzing failed: Result is smaller than operand 'a'\n");
                 print_bignum("a", &a);

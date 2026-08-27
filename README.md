@@ -80,7 +80,7 @@ The C11 implementation is the correctness reference. The YASM entry point follow
 
 ## Error Handling and Security
 
-Inputs are validated before publication of results. Capacity overflow, invalid lengths, null pointers, division by zero, and forbidden overlap are reported through named statuses defined by the header. No partial result is exposed on an error path. The implementation uses bounded fixed-size storage and does not perform unchecked dynamic allocation.
+Inputs are validated before publication of results. Capacity overflow, invalid lengths, null pointers, and forbidden overlap are reported through named statuses defined by the header. No partial result is exposed on an error path. The implementation uses bounded fixed-size storage and does not perform unchecked dynamic allocation.
 
 ## Documentation Quality Gates
 

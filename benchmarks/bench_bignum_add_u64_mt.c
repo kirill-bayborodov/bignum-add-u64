@@ -1,6 +1,6 @@
 /**
  * @file bench_bignum_add_u64_mt.c
- * @brief Multi-thread benchmark-framework entrypoint for bignum subtraction.
+ * @brief Multi-thread benchmark-framework entrypoint for bignum scalar addition.
  */
 #include <stdlib.h>
 #include <benchmark_framework.h>

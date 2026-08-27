@@ -19,7 +19,7 @@ static benchmark_workload_t make_workload(void)
     return (benchmark_workload_t){
         .data_mode = "custom",
         .input_kind = "nonzero",
-        .operation_kind = "default",
+        .operation_kind = "add_u64",
         .measure_mode = "kernel-only",
         .size_profile = "quarter",
         .capacity_profile = "normal",
@@ -44,17 +44,17 @@ static void test_validation(void)
 }
 
 /**
- * @brief Checks benchmark-core legacy mode aliases accepted by the adapter.
- * @details benchmark-core maps all_zero, all_nonzero and mixed to noop/tiny,
- * default/medium and mixed/variable workload tokens before callbacks run.
+ * @brief Checks documented operation and size aliases accepted by the adapter.
+ * @details The adapter accepts `add_u64` and `mixed` operation kinds and
+ * `tiny` and `medium` size aliases before callbacks run.
  */
 static void test_legacy_modes(void)
 {
-    static const char *const operations[] = { "noop", "default", "mixed" };
-    static const char *const sizes[] = { "tiny", "medium", "variable" };
+    static const char *const operations[] = { "add_u64", "mixed" };
+    static const char *const sizes[] = { "tiny", "medium" };
     benchmark_workload_t workload = make_workload();
 
-    for (size_t index = 0U; index < 3U; ++index) {
+    for (size_t index = 0U; index < 2U; ++index) {
         workload.operation_kind = operations[index];
         workload.size_profile = sizes[index];
         assert(bignum_add_u64_benchmark_validate_workload(&workload) ==

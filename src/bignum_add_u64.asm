@@ -4,22 +4,22 @@
 ; @version 1.0.0
 ; @date    29.07.2026
 ;
-; @brief   Экстремально оптимизированная реализация сложения числа и 64-битного скаляра.
+; @brief   Optimized x86-64 implementation for adding a bignum and a 64-bit scalar.
 ;
 ; @details
-;   Использует System V AMD64 ABI.
-;   Оптимизации:
-;   - In-place Fast Exit (мгновенный выход без копирования, если result == a и CF=0)
-;   - Branchless Overlap Check (проверка перекрытия без ветвлений)
-;   - CF Preservation (сохранение флага переноса через lea/dec)
-;   - SSE Fast Copy (векторизованное копирование остатка)
-;   - Lazy Zeroing (быстрое обнуление хвоста через pxor/movdqu)
+;   Uses the System V AMD64 ABI. The result is published only after all
+;   validation and representability checks succeed.
+;   Optimizations:
+;   - exact in-place fast path without suffix copying;
+;   - branchless absolute-distance overlap check;
+;   - carry-preserving LEA/DEC scheduling;
+;   - SSE tail copy and lazy zeroing.
 ; -----------------------------------------------------------------------------
 
 section .text
 global bignum_add_u64
 
-; --- Константы ---
+; --- Fixed representation constants. ---
 BIGNUM_CAPACITY         equ 32
 BIGNUM_OFFSET_LEN       equ 256
 BUF_SIZE                equ 264
@@ -32,10 +32,8 @@ BIGNUM_ADD_U64_ERROR_OVERFLOW          equ -4
 
 align 16
 bignum_add_u64:
-    ; Аргументы:
-    ; rdi = bignum_t *result
-    ; rsi = const bignum_t *a
-    ; rdx = uint64_t b
+    ; Arguments: rdi = result, rsi = source a, rdx = scalar b.
+    ; Return: named status in EAX. r12/r14/r15 are callee-saved and restored.
 
     push    rbp
     mov     rbp, rsp
@@ -43,18 +41,18 @@ bignum_add_u64:
     push    r14
     push    r15
 
-    ; 1. Проверка на NULL
+    ; Validate pointers before dereferencing either object.
     test    rdi, rdi
     je      .err_null
     test    rsi, rsi
     je      .err_null
 
-    ; 2. Проверка длины a->len
+    ; Validate the source logical length.
     mov     r8, qword [rsi + BIGNUM_OFFSET_LEN]
     cmp     r8, BIGNUM_CAPACITY
     ja      .err_cap
 
-    ; 3. Branchless проверка перекрытия буферов (разрешаем in-place rdi == rsi)
+    ; Reject partial overlap while allowing exact in-place aliasing.
     cmp     rdi, rsi
     je      .overlap_ok
     mov     rax, rdi
@@ -67,34 +65,53 @@ bignum_add_u64:
     jb      .err_overlap
 .overlap_ok:
 
-    mov     r12, rdi        ; Сохраняем указатель на result
+    mov     r12, rdi        ; Preserve result for all success paths.
 
-    ; 4. Fast path: a->len == 0
+    ; Zero-source fast path.
     test    r8, r8
     jz      .a_is_zero
 
-    ; 5. Fast path: b == 0
+    ; Zero-scalar fast path.
     test    rdx, rdx
     jz      .b_is_zero
 
-    ; 6. Основной алгоритм сложения
+    ; Preflight full-capacity overflow before any destination write. This keeps
+    ; the error path transactional while avoiding the scan for ordinary inputs.
+    cmp     r8, BIGNUM_CAPACITY
+    jne     .add_main
+    test    rdx, rdx
+    jz      .add_main
     mov     rax, [rsi]
-    add     rax, rdx        ; Складываем младшее слово с b, устанавливаем CF
+    add     rax, rdx
+    jnc     .add_main
+    mov     rcx, 1
+.add_overflow_scan:
+    cmp     rcx, r8
+    jae     .err_overflow
+    cmp     qword [rsi + rcx*8], -1
+    jne     .add_main
+    inc     rcx
+    jmp     .add_overflow_scan
+
+.add_main:
+    ; Add the scalar and propagate carry through active source words.
+    mov     rax, [rsi]
+    add     rax, rdx        ; Add the scalar to the low word and set CF.
     mov     [rdi], rax
 
     mov     rcx, r8
-    dec     rcx             ; rcx = оставшиеся слова (a->len - 1)
+    dec     rcx             ; rcx = remaining words (a->len - 1).
     jz      .check_final_carry
 
-    lea     r14, [rsi + 8]  ; Указатель чтения
-    lea     r15, [rdi + 8]  ; Указатель записи
+    lea     r14, [rsi + 8]  ; Read pointer
+    lea     r15, [rdi + 8]  ; Write pointer
 
     align 16
 .add_loop:
-    jnc     .fast_copy      ; Если переноса нет, выходим из цикла сложения
+    jnc     .fast_copy      ; Carry is clear; copy the untouched suffix.
     
     mov     rax, [r14]
-    adc     rax, 0          ; Прибавляем перенос
+    adc     rax, 0          ; Add the incoming carry to this word.
     mov     [r15], rax
     
     lea     r14, [r14 + 8]
@@ -104,15 +121,15 @@ bignum_add_u64:
     jmp     .check_final_carry
 
 .fast_copy:
-    ; Если переноса больше нет, проверяем, in-place ли это операция
+    ; Carry is clear; skip arithmetic and handle the untouched suffix.
     cmp     r12, rsi
-    je      .sub_done       ; Если in-place, остаток массива уже на месте! Мгновенный выход.
+    je      .add_done       ; For in-place calls, the untouched suffix is already in place.
 
-    ; Иначе копируем оставшиеся rcx слов из r14 в r15
+    ; Otherwise copy the remaining rcx words from r14 to r15.
     test    rcx, rcx
-    jz      .sub_done
+    jz      .add_done
     mov     rax, rcx
-    shr     rax, 1          ; rax = количество 16-байтных блоков
+    shr     rax, 1          ; rax = number of 16-byte blocks
     jz      .fast_copy_odd
 
     align 16
@@ -126,22 +143,22 @@ bignum_add_u64:
 
 .fast_copy_odd:
     test    rcx, 1
-    jz      .sub_done
+    jz      .add_done
     mov     rax, [r14]
     mov     [r15], rax
-    jmp     .sub_done
+    jmp     .add_done
 
 .check_final_carry:
-    jnc     .sub_done
+    jnc     .add_done
     cmp     r8, BIGNUM_CAPACITY
-    jae     .err_overflow   ; Переполнение
+    jae     .err_overflow       ; Overflow.
     mov     qword [rdi + r8*8], 1
-    inc     r8              ; Увеличиваем длину
+    inc     r8              ; Increase logical length
 
-.sub_done:
+.add_done:
     mov     qword [r12 + BIGNUM_OFFSET_LEN], r8
 
-    ; 7. Lazy Zeroing (обнуление неиспользуемого хвоста)
+    ; Clear unused capacity before normalization.
 .zero_rest:
     mov     rcx, BIGNUM_CAPACITY
     sub     rcx, r8
@@ -166,7 +183,7 @@ bignum_add_u64:
     mov     qword [r15], 0
 
 .normalize:
-    ; 8. Нормализация результата
+    ; Normalize the published logical length.
     mov     rdi, r12
     mov     rcx, r8
     test    rcx, rcx
@@ -187,24 +204,24 @@ bignum_add_u64:
     mov     eax, BIGNUM_ADD_U64_SUCCESS
     jmp     .epilogue
 
-    ; --- Обработчики особых случаев ---
+    ; --- Special-case handlers. ---
 .a_is_zero:
     test    rdx, rdx
     jz      .both_zero
     mov     [rdi], rdx
     mov     r8, 1
-    jmp     .sub_done
+    jmp     .add_done
 .both_zero:
     mov     r8, 0
-    jmp     .sub_done
+    jmp     .add_done
 
 .b_is_zero:
     cmp     rdi, rsi
-    je      .zero_rest      ; Если in-place, просто обнуляем хвост и нормализуем
+    je      .zero_rest      ; In-place calls only need tail clearing and normalization.
     mov     rcx, r8
     mov     r14, rsi
     mov     r15, rdi
-    jmp     .fast_copy      ; Копируем a в result
+    jmp     .fast_copy      ; Copy a into result
 
 .err_null:
     mov     eax, BIGNUM_ADD_U64_ERROR_NULL_PTR
