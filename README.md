@@ -2,15 +2,15 @@
 
 ## Overview
 
-Adds a uint64_t value to a fixed-capacity unsigned big integer. The module uses the little-endian `bignum_t` representation supplied by `bignum-core`. It exposes a deterministic C11 reference implementation and the repository's x86-64 System V YASM implementation where available.
+Adds an unsigned 64-bit value to a fixed-capacity unsigned big integer. The module uses the little-endian `bignum_t` representation supplied by `bignum-core`. It exposes a deterministic C11 reference implementation and the repository's x86-64 System V YASM implementation where available.
 
 ## Features
 
-The API has one operation-specific public entry point, explicit named status codes, fixed-capacity storage, caller-owned inputs and caller-allocated outputs. Successful calls publish a complete result. Failure paths are transactional unless the public header explicitly defines an in-place operation.
+The API has one operation-specific public entry point, explicit named status codes, fixed-capacity storage, caller-owned inputs and caller-allocated outputs. Successful calls publish a complete normalized result. Failure paths are transactional, and exact in-place operation is supported when `result == a`.
 
 ## Representation and Contract
 
-`bignum_t` stores `BIGNUM_CAPACITY` little-endian 64-bit words and a logical `len`. Inputs are borrowed and remain owned by the caller. The library does not allocate or free caller storage. Pointers must remain valid for the duration of the call. Each status code in the public header defines whether outputs remain unchanged, are zeroed, or contain a published result.
+`bignum_t` stores `BIGNUM_CAPACITY` little-endian 64-bit words and a logical `len`. Inputs are borrowed and remain owned by the caller. The library does not allocate or free caller storage. Pointers must remain valid for the duration of the call. Each status code in the public header defines validation, overlap, capacity, overflow, and output-publication semantics.
 
 ## API
 
@@ -18,14 +18,11 @@ The primary operation is:
 
 ```c
 #include "bignum_add_u64.h"
-
-bignum_t result;
-bignum_t a;
-uint64_t b = 3;
-bignum_add_u64_status_t status = bignum_add_u64(&result, &a, b);
+bignum_add_u64_status_t bignum_add_u64(
+    bignum_t *result, const bignum_t *a, uint64_t b);
 ```
 
-The caller allocates `result` and owns both bignum objects. Exact in-place use is valid (`result == a`), while partial object overlap is rejected. A successful call produces the normalized value `a + b`; callers must inspect the named status before consuming the result. The public header is authoritative for parameter direction, aliasing, overflow, normalization, and status semantics. No undocumented global state is used; independent calls are thread-safe when their objects do not overlap.
+The public header is authoritative for parameter direction, aliasing, overflow, normalization, and status semantics. No undocumented global state is used; independent calls are thread-safe when their objects do not overlap. The scalar `b` is added to the least-significant word and any carry is propagated through the active words.
 
 ## Dependencies
 
@@ -62,11 +59,11 @@ make test CONFIG=release USE_ASM=no CC='gcc --coverage' LDFLAGS='--coverage -no-
 gcov -b -c build/bignum_add_u64.gcda
 ```
 
-Coverage acceptance is greater than 90% for the operation source; the current review record reports the measured line and branch results, and any defensive branches not taken must be explained there.
+Coverage acceptance is greater than 90% for the operation source; uncovered defensive branches must be explained in the review record.
 
 ## Benchmarks
 
-The benchmark adapter supplies deterministic operands, validates profile fields, executes the operation callback, and publishes a checksum after completion. The standard matrix can be run as follows. The command below is a small reproducible smoke run; increase repetitions and iterations for performance decisions:
+The benchmark adapter supplies deterministic operands, validates profile fields, executes the operation callback, and publishes a checksum after completion. The standard matrix can be run as follows:
 
 ```sh
 make bench_matrix CONFIG=release USE_ASM=no \
@@ -76,15 +73,15 @@ make bench_matrix CONFIG=release USE_ASM=no \
   BENCH_MATRIX_DATA_COUNT=1 BENCH_MATRIX_TIMEOUT_SECONDS=30
 ```
 
-Run the same command with `USE_ASM=yes` for the assembly comparison. Reports are written under `benchmarks/reports/`; compare like-for-like profile and execution-mode keys only, and use the companion profile guides for the full matrix and validation rules.
+Run the same command with `USE_ASM=yes` for the assembly comparison. Reports are written under `benchmarks/reports/`; compare like-for-like profile and execution-mode keys only.
 
 ## C11 and Assembly Boundary
 
-The C11 implementation is the correctness reference. The YASM entry point follows the System V AMD64 ABI: integer and pointer arguments use the standard registers, callee-saved registers are preserved, the stack remains aligned at call boundaries, and the named status value is returned in `RAX`. The assembly implementation must preserve the same `bignum_t` memory layout and observable error behavior.
+The C11 implementation is the correctness reference. The YASM entry point follows the System V AMD64 ABI: `result`, `a`, and `b` arrive in `RDI`, `RSI`, and `RDX`; callee-saved registers are preserved; the stack remains aligned at call boundaries; and the named status value is returned in `RAX`. The assembly implementation must preserve the same `bignum_t` memory layout and observable transactional error behavior.
 
 ## Error Handling and Security
 
-Inputs are validated before publication of results. Capacity overflow, invalid lengths, null pointers, and forbidden overlap are reported through named statuses defined by the header. No partial result is exposed on an error path. The implementation uses bounded fixed-size storage and does not perform unchecked dynamic allocation.
+Inputs are validated before publication of results. Capacity overflow, invalid lengths, null pointers, and forbidden partial overlap are reported through named statuses defined by the header. Exact in-place aliasing is permitted. No partial result is exposed on an error path. The implementation uses bounded fixed-size storage and does not perform unchecked dynamic allocation.
 
 ## Documentation Quality Gates
 
